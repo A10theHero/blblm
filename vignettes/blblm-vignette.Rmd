@@ -1,0 +1,170 @@
+---
+title: "blblm Documentation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{blblm Documentation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+library(tidyverse)
+```
+
+
+```{r setup}
+library(blblm)
+
+set.seed(100)
+```
+
+
+## Introduction
+
+This package applies the "Bag of Little Bootstraps" (BLB) method to Linear Regression. Bootstrapping is used on subsamples of the main sample, and the results can be combined to produce estimates or ranges of estimates for several parameters. 
+
+The functions in this package are modeled after those related to `lm()`. This package is not as comprehensive, but it includes counterparts to several of the main functions in `lm()`. 
+
+In addition, parallel support is included (using `furrr`), and the functions are designed to be slightly more `Tidyverse`-friendly. Finally, `Rcpp` was incorporated into the computations to improve function performance.
+
+
+## Main Functions
+
+
+### `blblm()`
+
+The titular function of this package takes a Data Frame (or similar container) as input, along with several other inputs: 
+
+* `formula`: The regression formula
+* `m`: The number of subsamples created
+* `B`: The number of bootstraps performed
+* `useParallel`: Whether parallel functions should be used
+* `useFreqs`: Whether frequencies should be generated for each set of data
+
+First, the data is randomly split into `m` subsamples. Some subsamples can have 0 rows of data assigned (especially when `m` is greater than the `nrow()` of the data), but no subsample is allowed to have only 1 row of data. 
+
+Afterwards, for each subsample, the following steps occur `B` times:
+
+1. Randomly generate frequencies for each row of data 
+
+   + A multinomial distribution is used for this task. 
+   + A number between 1 and `nrow(subsample)` is generated `nrow(entireSample)` times.
+   + The tallied number of occurrences for each subsample row are used as their respective frequencies.
+
+2. Apply Weighted Linear Regression to the subsample
+
+   + Matrices for the frequencies as well as the predictor and response variables are prepared in R.
+   + Weighted Linear Regression is applied in a C++ function.
+   + Rcpp and RcppArmadillo are used in the program to solve $\hat{\beta} = (X'WX)^{-1}X'WY$. 
+   + $X$ is a matrix of the predictor variables and the intercept (if not removed in `formula`), $Y$ is a vector of the response variable, and $W$ is a matrix whose main diagonal consists of the frequencies.
+   + The regression coefficients ($\hat{\beta}$), Residual Standard Deviation (${\sigma}$), Coefficient of Determination ($R^{2}$), and Adjusted Coefficient of Determination ($Adj$-$R^{2}$) are all returned as a vector by the C++ function.
+
+In total, `m` x `B` regressions are performed. `blblm()` returns a list (of class `blblm`) with two sublists: `estimates` and `formula`. Under the former, the C++ output from the computations performed are organized in a list hierarchy, separated first by subsample, followed by bootstrap iteration. And `formula` simply contains the regression formula first input into `blblm()`.
+
+
+```{r}
+# Example Output
+
+# Run the function using data from mtcars
+blbFit <- blblm(mtcars, mpg ~ hp + cyl, m = 3, B = 100)
+
+# Coefficients from the first subsample's 50th bootstrap trial
+blbFit$estimates$`1`[[50]]$coef
+```
+
+#### `useParallel = TRUE`
+
+To speed up the computations, `furrr::future_map()` can be used in place of `purrr::map()`. Assuming that the user has already run `future::plan()`, `useParallel = TRUE` causes the program to delegate subsamples to different workers. 
+
+
+#### `useFreqs = FALSE`
+
+If no frequencies should be applied to the data, then `useFreqs` should be set to `FALSE`. Instead, every row of data would be assigned a frequency of 1. This is not recommended because every bootstrap sample that would occur for a given subsample would return the exact same values. But the option exists, nonetheless. This may be useful, for example, if the research interest is the change in regression output due to subsetting rather than bootstrapping (i.e. `m > 1` while `B = 1` and `useFreqs = FALSE`).
+
+
+### `blblm_csv()`
+
+If the dataset is split into separate CSV files, this function should be used in place of `blblm()`. It follows the same procedure as `blblm()`, but it does not execute the splitting function (because the data is already separated). However, because the full dataset is not available to the function, in place of splitting the dataset, there is a procedure that computes the total number of observations across the files. (Setting `useParallel = TRUE` can also improve the performance of that computation.)
+
+
+## Additional Functions and Methods
+
+Given a `blblm` object, several methods are available to extract and utilize the values nested in the list. Most of them are modeled after methods designed for `lm()`. 
+
+
+### `sigma.blblm()`
+
+Like its `lm()` counterpart, this function returns an estimate for the Residual Standard Deviation. It computes an average value based on the output standard deviation from each of the subsamples' bootstrap trials. The function can produce confidence intervals as well. All standard deviations produced in the trials are treated as a population, and `stats::quantile()` is used to determine the confidence limits.
+
+
+```{r}
+# Output the average sigma only
+sigma(blbFit)
+
+# Return a 90% confidence interval for sigma
+sigma(blbFit, confidence = TRUE, level = 0.90)
+```
+
+
+### `coef.blblm()`
+
+Continuing the trend, `coef.blblm()` outputs averages for the regression coefficients using a similar method as `sigma.blblm()`.
+
+```{r}
+# Output averages for the coefficients
+coef(blbFit)
+```
+
+
+### `confint.blblm()`
+
+For `lm` objects, confidence intervals of model parameters are handled in a separate function from `coef()`. For consistency, this was done for `blblm` objects as well. As with `confint.lm()`, if no model parameter is specified, confidence intervals are returned for all variables. However, unlike its `lm()` counterpart, `confint.blblm()` requires model parameters in `parm` to be specified by name; vectors of numbers cannot be used. 
+
+
+```{r}
+# Create confidence intervals for the coefficients
+confint(blbFit, parm = NULL, level = 0.95)
+```
+
+
+### `predict.blblm()`
+
+Given data for the predictor variables as input, estimates for the response variable are produced. As an additional feature, using the population of coefficient estimates, confidence intervals can be constructed for the input data.
+
+
+```{r}
+# Predict the MPG (Actual = 21)
+predict(blbFit, mtcars[1, ])
+
+# Construct a confidence interval for the MPG (Actual = 16.4)
+predict(blbFit, mtcars[12, ], confidence = TRUE, level = 0.95)
+```
+
+
+### `print.blblm()`
+
+This function is simpler than its `lm()` counterpart. Only the model formula is printed out in `blblm.print()`. 
+
+
+```{r}
+# Print the model formula
+print(blbFit)
+```
+
+
+### `Rsq.blblm()` `and` `Adj.Rsq.blblm()`
+
+This package lacks a sufficient counterpart to `lm.summary()`, but these functions are intended to replicate some of its functionality, specifically for the computation of the Coefficient of Determination and its adjusted counterpart. These functions have the added capability of returning a confidence interval for the coefficients.
+
+```{r}
+# Return an average R^2 
+blbFit %>% Rsq.blblm()
+
+# Return a 99% confidence interval for the adjusted R^2
+blbFit %>% Adj.Rsq.blblm(confidence = TRUE, level = 0.99)
+```

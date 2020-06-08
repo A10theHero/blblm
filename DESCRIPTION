@@ -1,0 +1,29 @@
+Package: blblm
+Type: Package
+Title: Linear Regression with a Bag of Little Bootstraps
+Version: 0.1.0
+Author: Randy Lai
+Maintainer: Aakash Prashar <akprashar@ucdavis.edu>
+Description: Functions related to using little bootstraps to make linear models. Support for parallelism and CSV file reading is included. 
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Suggests: 
+    testthat (>= 2.1.0),
+    knitr,
+    rmarkdown,
+    tidyverse
+Imports: 
+    purrr,
+    magrittr,
+    Rcpp,
+    furrr,
+    readr,
+    stats,
+    future,
+    RcppArmadillo
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.0
+LinkingTo: 
+    Rcpp, RcppArmadillo
+VignetteBuilder: knitr
