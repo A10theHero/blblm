@@ -430,6 +430,12 @@ predict.blblm <- function(object, new_data, confidence = FALSE, level = 0.95, ..
             ), new_data)
 
 
+  # If there's no intercept, remove it from X
+  if (base::attr(stats::terms(object$formula), "intercept") == 0) {
+    X <- X[, -1]
+  }
+
+
   # If a confidence interval should be used
   if (confidence) {
 
